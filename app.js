@@ -331,9 +331,9 @@ async function renderEdit(id) {
 
   const keys = e => {
     if (document.querySelector('.overlay')) return;
-    const mod = e.metaKey || e.ctrlKey, k = e.key.toLowerCase();
-    if (mod && k === 's') { e.preventDefault(); save(); }
-    else if (mod && k === 'k') { e.preventDefault(); openTags(); }
+    const mod = e.metaKey || e.ctrlKey, k = e.code; // physical key: works with Korean input too
+    if (mod && k === 'KeyS') { e.preventDefault(); save(); }
+    else if (mod && k === 'KeyK') { e.preventDefault(); openTags(); }
     else if (e.key === 'Escape' && !e.isComposing) { e.preventDefault(); done(); }
   };
   const unload = e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } };
@@ -537,8 +537,8 @@ document.addEventListener('keydown', e => {
   if (!token || editorCleanup || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
   if (e.target.closest('input, textarea, [contenteditable]')) return;
   const m = location.hash.match(/^#\/(\d+)$/);
-  if (e.key === 'e' && m) location.hash = `#/${m[1]}/edit`;
-  else if (e.key === 'n') location.hash = '#/new';
+  if (e.code === 'KeyE' && m) location.hash = `#/${m[1]}/edit`;
+  else if (e.code === 'KeyN') location.hash = '#/new';
 });
 (async () => {
   updateNav();
