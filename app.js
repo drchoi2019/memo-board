@@ -373,7 +373,34 @@ function renderSettings() {
       <button class="btn" id="saveTok">Save</button>
       <button class="btn ghost" id="clearTok">Remove</button>
     </div>
-    <p id="tokMsg" class="muted"></p>`;
+    <p id="tokMsg" class="muted"></p>
+    <section class="display">
+      <h3>Display</h3>
+      <p class="muted">Saved on this device only.</p>
+      ${DISPLAY.map(d => `
+        <div class="stepper">
+          <span>${d.label}</span>
+          <button class="btn ghost" data-k="${d.key}" data-dir="-1" aria-label="Decrease ${d.label}">−</button>
+          <output id="${d.key}_out">${displayValue(d)}${d.unit}</output>
+          <button class="btn ghost" data-k="${d.key}" data-dir="1" aria-label="Increase ${d.label}">+</button>
+        </div>`).join('')}
+      <button class="btn ghost" id="resetDisplay">Reset</button>
+    </section>`;
+  app.querySelectorAll('.stepper button').forEach(b => b.onclick = () => {
+    const d = DISPLAY.find(x => x.key === b.dataset.k);
+    const v = Math.round((Number(displayValue(d)) + d.step * b.dataset.dir) * 10) / 10;
+    const nv = Math.min(d.max, Math.max(d.min, v));
+    store(d.key, nv === d.def ? '' : String(nv));
+    document.getElementById(d.key + '_out').textContent = nv + d.unit;
+    applyDisplay();
+  });
+  document.getElementById('resetDisplay').onclick = () => {
+    for (const d of DISPLAY) {
+      store(d.key, '');
+      document.getElementById(d.key + '_out').textContent = d.def + d.unit;
+    }
+    applyDisplay();
+  };
   const msg = document.getElementById('tokMsg');
   document.getElementById('saveTok').onclick = async () => {
     const v = document.getElementById('tok').value.trim();
@@ -396,6 +423,21 @@ function renderSettings() {
 }
 
 function updateNav() { document.getElementById('newBtn').hidden = !token; }
+
+// ---------- display settings (per device) ----------
+const DISPLAY = [
+  { key: 'mb_fs', css: '--fs', label: 'Font size', min: 14, max: 26, step: 1, def: 18, unit: 'px' },
+  { key: 'mb_lh', css: '--lh', label: 'Line height', min: 1.4, max: 2.8, step: 0.1, def: 2, unit: '' },
+  { key: 'mb_w', css: '--w', label: 'Width', min: 560, max: 1400, step: 40, def: 760, unit: 'px' },
+];
+const displayValue = d => load(d.key) || d.def;
+function applyDisplay() {
+  for (const d of DISPLAY) {
+    const v = load(d.key);
+    if (v) document.documentElement.style.setProperty(d.css, v + (d.unit === 'px' ? 'px' : ''));
+    else document.documentElement.style.removeProperty(d.css);
+  }
+}
 
 // ---------- theme (light by default) ----------
 const themeBtn = document.getElementById('themeBtn');

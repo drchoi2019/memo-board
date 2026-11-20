@@ -9,7 +9,13 @@
 <link rel="apple-touch-icon" href="favicon.png">
 <link rel="preload" href="fonts/RIDIBatang.otf" as="font" type="font/otf" crossorigin>
 <link rel="stylesheet" href="style.css">
-<script>try { if (localStorage.getItem('mb_theme') === 'dark') document.documentElement.dataset.theme = 'dark'; } catch {}</script>
+<script>try {
+  const r = document.documentElement, ls = localStorage;
+  if (ls.getItem('mb_theme') === 'dark') r.dataset.theme = 'dark';
+  if (ls.getItem('mb_fs')) r.style.setProperty('--fs', ls.getItem('mb_fs') + 'px');
+  if (ls.getItem('mb_lh')) r.style.setProperty('--lh', ls.getItem('mb_lh'));
+  if (ls.getItem('mb_w')) r.style.setProperty('--w', ls.getItem('mb_w') + 'px');
+} catch {}</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
 </head>
