@@ -373,34 +373,7 @@ function renderSettings() {
       <button class="btn" id="saveTok">Save</button>
       <button class="btn ghost" id="clearTok">Remove</button>
     </div>
-    <p id="tokMsg" class="muted"></p>
-    <section class="display">
-      <h3>Display</h3>
-      <p class="muted">Saved on this device only.</p>
-      ${DISPLAY.map(d => `
-        <div class="stepper">
-          <span>${d.label}</span>
-          <button class="btn ghost" data-k="${d.key}" data-dir="-1" aria-label="Decrease ${d.label}">−</button>
-          <output id="${d.key}_out">${displayValue(d)}${d.unit}</output>
-          <button class="btn ghost" data-k="${d.key}" data-dir="1" aria-label="Increase ${d.label}">+</button>
-        </div>`).join('')}
-      <button class="btn ghost" id="resetDisplay">Reset</button>
-    </section>`;
-  app.querySelectorAll('.stepper button').forEach(b => b.onclick = () => {
-    const d = DISPLAY.find(x => x.key === b.dataset.k);
-    const v = Math.round((Number(displayValue(d)) + d.step * b.dataset.dir) * 10) / 10;
-    const nv = Math.min(d.max, Math.max(d.min, v));
-    store(d.key, nv === d.def ? '' : String(nv));
-    document.getElementById(d.key + '_out').textContent = nv + d.unit;
-    applyDisplay();
-  });
-  document.getElementById('resetDisplay').onclick = () => {
-    for (const d of DISPLAY) {
-      store(d.key, '');
-      document.getElementById(d.key + '_out').textContent = d.def + d.unit;
-    }
-    applyDisplay();
-  };
+    <p id="tokMsg" class="muted"></p>`;
   const msg = document.getElementById('tokMsg');
   document.getElementById('saveTok').onclick = async () => {
     const v = document.getElementById('tok').value.trim();
@@ -438,6 +411,38 @@ function applyDisplay() {
     else document.documentElement.style.removeProperty(d.css);
   }
 }
+
+// Popup next to the theme button: − / + for each setting.
+const displayBtn = document.getElementById('displayBtn'), displayPop = document.getElementById('displayPop');
+function drawDisplayPop() {
+  displayPop.innerHTML = DISPLAY.map(d => `
+    <div class="stepper">
+      <span>${d.label}</span>
+      <button class="btn ghost" data-k="${d.key}" data-dir="-1" aria-label="Decrease ${d.label}">−</button>
+      <output>${displayValue(d)}${d.unit}</output>
+      <button class="btn ghost" data-k="${d.key}" data-dir="1" aria-label="Increase ${d.label}">+</button>
+    </div>`).join('') + '<button class="btn ghost reset" data-reset="1">Reset</button>';
+}
+displayBtn.onclick = e => {
+  e.stopPropagation();
+  if (displayPop.hidden) drawDisplayPop();
+  displayPop.hidden = !displayPop.hidden;
+};
+displayPop.onclick = e => {
+  e.stopPropagation();
+  const b = e.target.closest('button');
+  if (!b) return;
+  if (b.dataset.reset) { for (const d of DISPLAY) store(d.key, ''); }
+  else {
+    const d = DISPLAY.find(x => x.key === b.dataset.k);
+    const v = Math.round((Number(displayValue(d)) + d.step * b.dataset.dir) * 10) / 10;
+    const nv = Math.min(d.max, Math.max(d.min, v));
+    store(d.key, nv === d.def ? '' : String(nv));
+  }
+  applyDisplay(); drawDisplayPop();
+};
+document.addEventListener('click', () => (displayPop.hidden = true));
+document.addEventListener('keydown', e => { if (e.key === 'Escape') displayPop.hidden = true; });
 
 // ---------- theme (light by default) ----------
 const themeBtn = document.getElementById('themeBtn');
