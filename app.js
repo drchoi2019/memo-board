@@ -196,6 +196,9 @@ async function renderEdit(id) {
     <p id="err" class="error"></p>`;
   const tags = tagInput(p.tags);
   if (id == null) document.getElementById('title').focus();
+  const ta = document.getElementById('body');
+  const grow = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 2 + 'px'; };
+  ta.addEventListener('input', grow); grow();
 
   document.getElementById('save').onclick = async e => {
     const btn = e.target, err = document.getElementById('err');
@@ -316,6 +319,19 @@ function renderSettings() {
 }
 
 function updateNav() { document.getElementById('newBtn').hidden = !token; }
+
+// ---------- theme (light by default) ----------
+const themeBtn = document.getElementById('themeBtn');
+function applyTheme(dark) {
+  if (dark) document.documentElement.dataset.theme = 'dark'; else delete document.documentElement.dataset.theme;
+  themeBtn.textContent = dark ? 'Light' : 'Dark';
+}
+applyTheme(load('mb_theme') === 'dark');
+themeBtn.onclick = () => {
+  const dark = document.documentElement.dataset.theme !== 'dark';
+  store('mb_theme', dark ? 'dark' : '');
+  applyTheme(dark);
+};
 
 // ---------- router ----------
 async function route() {

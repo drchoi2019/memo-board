@@ -1,7 +1,7 @@
 @font-face {
   font-family: "RIDIBatang";
   src: url("fonts/RIDIBatang.otf") format("opentype");
-  font-display: swap;
+  font-display: block;
 }
 
 :root {
@@ -16,20 +16,6 @@
   --accent: #7A6A4F;
   --danger: #B2453A;
 }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #1E1E1E;
-    --header: #262626;
-    --border: #3A3A3A;
-    --panel: #2B2B2B;
-    --chip: #454545;
-    --chip-border: #666666;
-    --text: #E8E4DC;
-    --muted: #9A958B;
-    --accent: #CDB98F;
-    --danger: #E07A6F;
-  }
-}
 :root[data-theme="dark"] {
   --bg: #1E1E1E; --header: #262626; --border: #3A3A3A; --panel: #2B2B2B;
   --chip: #454545; --chip-border: #666666; --text: #E8E4DC; --muted: #9A958B;
@@ -42,8 +28,8 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: "RIDIBatang", "Apple SD Gothic Neo", serif;
-  font-size: 17px;
-  line-height: 1.75;
+  font-size: 18px;
+  line-height: 2;
 }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -59,7 +45,7 @@ a:hover { text-decoration: underline; }
 .brand { font-size: 19px; color: var(--text); font-weight: bold; }
 .top nav { display: flex; gap: 8px; }
 
-main { max-width: 760px; margin: 0 auto; padding: 24px 16px 80px; }
+main { max-width: 1000px; margin: 0 auto; padding: 24px 24px 80px; }
 
 .btn {
   display: inline-block;
@@ -90,7 +76,14 @@ input[type=text], input[type=search], input[type=password], textarea {
   outline: none;
 }
 input:focus, textarea:focus { border-color: var(--accent); }
-textarea { min-height: 50vh; resize: vertical; line-height: 1.75; }
+textarea {
+  display: block;
+  min-height: calc(100vh - 290px);
+  min-height: calc(100dvh - 290px);
+  resize: none; overflow: hidden;
+  line-height: 2;
+  padding: 16px 18px;
+}
 
 .chip {
   display: inline-flex; align-items: center; gap: 4px;
@@ -119,6 +112,7 @@ a.chip:hover { text-decoration: none; border-color: var(--accent); }
 .post h1.ptitle { font-size: 26px; line-height: 1.4; margin: 0 0 6px; }
 .post .meta { font-size: 13px; margin-bottom: 20px; }
 .post .body { word-break: break-word; }
+.post .body p, .post .body ul, .post .body ol { margin: 0 0 1.2em; }
 .post .body img { max-width: 100%; }
 .post .body pre { background: var(--panel); padding: 12px; border-radius: 8px; overflow-x: auto; }
 .post .body code { font-size: 14px; }
@@ -138,7 +132,7 @@ a.chip:hover { text-decoration: none; border-color: var(--accent); }
 .tagbox:focus-within { border-color: var(--accent); }
 .tagbox input {
   flex: 1; min-width: 120px;
-  border: 0; background: none; padding: 4px; font-size: 15px;
+  border: 0; background: none; padding: 4px; font-size: 16px;
 }
 .suggest {
   position: absolute; left: 0; right: 0; top: 100%; z-index: 10;
@@ -158,3 +152,21 @@ a.chip:hover { text-decoration: none; border-color: var(--accent); }
   padding: 8px 16px; border-radius: 8px; font-size: 14px;
 }
 .error { color: var(--danger); }
+
+/* phones */
+@media (max-width: 640px) {
+  body { font-size: 17px; line-height: 1.9; }
+  .top { padding: 8px 12px; gap: 8px; }
+  .brand { font-size: 16px; white-space: nowrap; }
+  .top nav { gap: 6px; }
+  .top .btn { padding: 9px 10px; font-size: 13px; }
+  main { padding: 16px 16px 60px; }
+  .btn { padding: 11px 14px; }
+  .list li { padding: 12px 0; }
+  .list .title { font-size: 17px; }
+  .post h1.ptitle { font-size: 22px; }
+  .actions { flex-direction: column; align-items: stretch; }
+  .actions .row { justify-content: flex-end; }
+  textarea { min-height: calc(100vh - 250px); min-height: calc(100dvh - 250px); padding: 12px 14px; line-height: 1.9; }
+  .suggest div { padding: 10px 12px; }
+}

@@ -6,7 +6,9 @@
 <title>Memo Board</title>
 <link rel="icon" href="favicon.png">
 <link rel="apple-touch-icon" href="favicon.png">
+<link rel="preload" href="fonts/RIDIBatang.otf" as="font" type="font/otf" crossorigin>
 <link rel="stylesheet" href="style.css">
+<script>try { if (localStorage.getItem('mb_theme') === 'dark') document.documentElement.dataset.theme = 'dark'; } catch {}</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
 </head>
@@ -14,7 +16,9 @@
 <header class="top">
   <a class="brand" href="#/">Memo Board</a>
   <nav>
+    <a class="btn ghost" href="#/">Posts</a>
     <a id="newBtn" class="btn" href="#/new" hidden>New</a>
+    <button id="themeBtn" class="btn ghost" type="button">Dark</button>
     <a class="btn ghost" href="#/settings">Settings</a>
   </nav>
 </header>
