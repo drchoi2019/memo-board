@@ -201,7 +201,7 @@ async function renderView(id) {
         <span class="muted">${fmtDate(p.created)}${p.updated && p.updated !== p.created ? ` · edited ${fmtDate(p.updated)}` : ''}</span>
         ${p.tags.map(t => `<a class="chip" href="${tagHref(t)}">${esc(t)}</a>`).join('')}
       </div>
-      <div class="body">${DOMPurify.sanitize(marked.parse(p.body))}</div>
+      <div class="body">${DOMPurify.sanitize(marked.parse(p.body, { breaks: true }))}</div>
       <div class="actions row spread">
         <button class="btn ghost" id="copy">Copy link</button>
         <span class="row" ${token ? '' : 'hidden'}>
