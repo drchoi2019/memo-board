@@ -28,12 +28,12 @@ function toast(msg) {
 
 // ---------- front matter ----------
 function serialize(p) {
-  return `---\ntitle: ${JSON.stringify(p.title)}\ntags: ${JSON.stringify(p.tags)}\ncreated: ${p.created}\nupdated: ${p.updated}\n---\n\n${p.body}`;
+  return `---\ntitle: ${JSON.stringify(p.title)}\ntags: ${JSON.stringify(p.tags)}\n${p.attachments?.length ? `attachments: ${JSON.stringify(p.attachments)}\n` : ''}created: ${p.created}\nupdated: ${p.updated}\n---\n\n${p.body}`;
 }
 function parse(text) {
   text = text.replace(/\r\n/g, '\n');
   const m = text.match(/^---\n([\s\S]*?)\n---\n?\n?([\s\S]*)$/);
-  if (!m) return { title: '', tags: [], body: text };
+  if (!m) return { title: '', tags: [], attachments: [], body: text };
   const meta = {};
   for (const line of m[1].split('\n')) {
     const i = line.indexOf(':');
@@ -41,7 +41,7 @@ function parse(text) {
     const k = line.slice(0, i).trim(), v = line.slice(i + 1).trim();
     try { meta[k] = JSON.parse(v); } catch { meta[k] = v; }
   }
-  return { ...meta, title: String(meta.title ?? ''), tags: Array.isArray(meta.tags) ? meta.tags : [], body: m[2] };
+  return { ...meta, title: String(meta.title ?? ''), tags: Array.isArray(meta.tags) ? meta.tags : [], attachments: Array.isArray(meta.attachments) ? meta.attachments : [], body: m[2] };
 }
 function excerptOf(body) {
   return body.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ').replace(/[#>*_`~\[\]()!-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
@@ -106,33 +106,34 @@ const blobB64 = blob => new Promise((res, rej) => {
   fr.onerror = rej;
   fr.readAsDataURL(blob);
 });
-function insertAtCursor(ta, text) {
-  const s = ta.selectionStart, e = ta.selectionEnd;
-  ta.value = ta.value.slice(0, s) + text + ta.value.slice(e);
-  ta.selectionStart = ta.selectionEnd = s + text.length;
-  ta.dispatchEvent(new Event('input'));
-}
 let uploading = 0;
-async function uploadImages(files, ta) {
+// Upload pasted/dropped images as attachments of the post (not shown inline).
+async function attachImages(files, onAdd, status) {
   for (const file of files) {
     if (!file.type.startsWith('image/')) continue;
-    const mark = `![Uploading ${Date.now()}…]()`;
-    insertAtCursor(ta, mark + '\n');
     uploading++;
+    status('Attaching…');
     try {
       const { blob, ext } = await prepareImage(file);
       const path = `images/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
       await writeB64(path, await blobB64(blob), null, `Add image ${path}`);
-      ta.value = ta.value.replace(mark, `![](${path})`);
+      onAdd(path);
+      status('Attached');
     } catch (e) {
-      ta.value = ta.value.replace(mark + '\n', '');
-      alert('Image upload failed: ' + e.message);
+      status('Attach failed: ' + e.message, true);
     } finally {
       uploading--;
-      ta.dispatchEvent(new Event('input'));
     }
   }
 }
+// First non-empty line is the title; the rest is the body below it.
+function splitTitle(text) {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const i = lines.findIndex(l => l.trim());
+  if (i < 0) return { title: '', rest: '' };
+  return { title: lines[i].trim().slice(0, 100), rest: lines.slice(i + 1).join('\n').replace(/^\s*\n/, '') };
+}
+const fileUrl = path => (token ? RAW : '') + path;
 function deleteFile(path, sha, message) {
   return api(`${REPO_API}/contents/${path}`, {
     method: 'DELETE',
@@ -193,6 +194,8 @@ async function renderView(id) {
   const f = await readFile(`posts/${id}.md`);
   if (!f) { app.innerHTML = '<p class="muted">This post does not exist.</p>'; return; }
   const p = parse(f.text);
+  const s = splitTitle(p.body);
+  const rest = s.title && s.title === p.title.trim() ? s.rest : p.body;   // older posts kept the title separately
   document.title = `${p.title || 'Untitled'} · Memo Board`;
   app.innerHTML = `
     <article class="post">
@@ -201,7 +204,9 @@ async function renderView(id) {
         <span class="muted">${fmtDate(p.created)}${p.updated && p.updated !== p.created ? ` · edited ${fmtDate(p.updated)}` : ''}</span>
         ${p.tags.map(t => `<a class="chip" href="${tagHref(t)}">${esc(t)}</a>`).join('')}
       </div>
-      <div class="body">${DOMPurify.sanitize(marked.parse(p.body, { breaks: true }))}</div>
+      <div class="body plain">${esc(rest)}</div>
+      ${p.attachments.length ? `<div class="attach">${p.attachments.map((a, i) =>
+        `<a href="${esc(fileUrl(a))}" target="_blank" rel="noopener">Attachment ${i + 1}</a>`).join('')}</div>` : ''}
       <div class="actions row spread">
         <button class="btn ghost" id="copy">Copy link</button>
         <span class="row" ${token ? '' : 'hidden'}>
@@ -210,11 +215,6 @@ async function renderView(id) {
         </span>
       </div>
     </article>`;
-  // Owner sees new images at once from raw GitHub; visitors get the Pages copy.
-  if (token) app.querySelectorAll('.body img').forEach(img => {
-    const src = img.getAttribute('src') || '';
-    if (src.startsWith('images/')) img.src = RAW + src;
-  });
   document.getElementById('copy').onclick = async () => {
     try { await navigator.clipboard.writeText(location.href); toast('Link copied'); }
     catch { prompt('Copy this link:', location.href); }
@@ -231,76 +231,126 @@ async function renderView(id) {
   };
 }
 
+// Editor: one frameless full-screen text area. ⌘S save · Esc save & close · ⌘K tags · paste/drop image = attach.
+let editorCleanup = null;
 async function renderEdit(id) {
   if (!token) { toast('Add your token first'); location.hash = '#/settings'; return; }
   app.innerHTML = '<p class="muted">Loading…</p>';
-  let p = { title: '', tags: [], body: '' }, sha = null;
+  let p = { title: '', tags: [], attachments: [], body: '' }, sha = null;
   if (id != null) {
     const f = await readFile(`posts/${id}.md`);
     if (!f) { app.innerHTML = '<p class="muted">This post does not exist.</p>'; return; }
     p = parse(f.text); sha = f.sha;
   }
-  document.title = (id == null ? 'New post' : 'Edit') + ' · Memo Board';
-  app.innerHTML = `
-    <div class="field"><input id="title" type="text" placeholder="Title" value="${esc(p.title)}"></div>
-    <div class="field tagwrap">
-      <div class="tagbox" id="tagbox"><input id="tagIn" type="text" placeholder="Add tag" autocomplete="off"></div>
-      <div class="suggest" id="suggest" hidden></div>
-    </div>
-    <div class="field"><textarea id="body" placeholder="Write in Markdown">${esc(p.body)}</textarea></div>
-    <div class="row spread">
-      <a class="btn ghost" href="${id == null ? '#/' : '#/' + id}">Cancel</a>
-      <span class="row">
-        <button class="btn ghost" id="imgBtn" type="button">Image</button>
-        <button class="btn" id="save">Save</button>
-      </span>
-    </div>
-    <input id="imgFile" type="file" accept="image/*" multiple hidden>
-    <p id="err" class="error"></p>`;
-  const tags = tagInput(p.tags);
-  if (id == null) document.getElementById('title').focus();
-  const ta = document.getElementById('body');
-  const grow = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 2 + 'px'; };
-  ta.addEventListener('input', grow); grow();
+  let text = p.body;
+  if (p.title && splitTitle(p.body).title !== p.title.trim()) text = p.title + '\n\n' + p.body;
+  let tags = [...p.tags], attachments = [...p.attachments], postId = id, dirty = false, saving = null;
 
-  const fileIn = document.getElementById('imgFile');
-  document.getElementById('imgBtn').onclick = () => fileIn.click();
-  fileIn.onchange = () => { uploadImages([...fileIn.files], ta); fileIn.value = ''; };
+  document.title = (id == null ? 'New post' : 'Edit') + ' · Memo Board';
+  document.body.classList.add('editing');
+  app.innerHTML = `
+    <textarea id="ed" spellcheck="false" autocomplete="off" placeholder="First line becomes the title"></textarea>
+    <div id="edStatus" class="ed-status">⌘S save · Esc done · ⌘K tags · paste image to attach</div>
+    <div class="ed-touch"><button class="btn ghost" id="edTags" type="button">Tags</button><button class="btn ghost" id="edDone" type="button">Done</button></div>`;
+  const ta = document.getElementById('ed'), st = document.getElementById('edStatus');
+  ta.value = text;
+  ta.focus();
+  if (id == null) ta.setSelectionRange(0, 0); else { ta.setSelectionRange(0, 0); ta.scrollTop = 0; }
+
+  let stTimer;
+  function status(msg, keep) {
+    st.textContent = msg; st.classList.remove('fade');
+    clearTimeout(stTimer);
+    if (!keep) stTimer = setTimeout(() => st.classList.add('fade'), 1500);
+  }
+  stTimer = setTimeout(() => st.classList.add('fade'), 3500);
+
+  ta.addEventListener('input', () => { dirty = true; });
+  const takeImages = list => [...(list || [])].filter(f => f.type.startsWith('image/'));
   ta.addEventListener('paste', e => {
-    const files = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith('image/'));
-    if (files.length) { e.preventDefault(); uploadImages(files, ta); }
+    const files = takeImages(e.clipboardData?.files);
+    if (files.length) { e.preventDefault(); attachImages(files, path => { attachments.push(path); dirty = true; }, status); }
   });
   ta.addEventListener('dragover', e => e.preventDefault());
   ta.addEventListener('drop', e => {
-    const files = [...(e.dataTransfer?.files || [])].filter(f => f.type.startsWith('image/'));
-    if (files.length) { e.preventDefault(); uploadImages(files, ta); }
+    const files = takeImages(e.dataTransfer?.files);
+    if (files.length) { e.preventDefault(); attachImages(files, path => { attachments.push(path); dirty = true; }, status); }
   });
 
-  document.getElementById('save').onclick = async e => {
-    const btn = e.target, err = document.getElementById('err');
-    const title = document.getElementById('title').value.trim();
-    const body = document.getElementById('body').value;
-    if (uploading) { err.textContent = 'Wait for images to finish uploading.'; return; }
-    if (!title && !body.trim()) { err.textContent = 'Write something first.'; return; }
-    btn.disabled = true; btn.textContent = 'Saving…'; err.textContent = '';
-    try {
+  function save() {
+    if (saving) return saving;
+    if (uploading) { status('Wait for attachments…'); return Promise.resolve(false); }
+    const snapshot = ta.value;
+    const { title, rest } = splitTitle(snapshot);
+    if (!title) { status('Nothing to save'); return Promise.resolve(false); }
+    status('Saving…', true);
+    saving = (async () => {
       const now = new Date().toISOString();
-      let postId = id;
       if (postId == null) { await loadIndex(); postId = index.reduce((m, x) => Math.max(m, x.id), 0) + 1; }
-      const post = { title, tags: tags.get(), body, created: p.created || now, updated: now };
-      await writeFile(`posts/${postId}.md`, serialize(post), sha, `${id == null ? 'Add' : 'Edit'} post ${postId}: ${title}`);
-      const entry = { id: postId, title, tags: post.tags, excerpt: excerptOf(body), created: post.created, updated: now };
+      p.created = p.created || now;
+      const post = { title, tags, attachments, body: snapshot, created: p.created, updated: now };
+      const r = await writeFile(`posts/${postId}.md`, serialize(post), sha, `${sha ? 'Edit' : 'Add'} post ${postId}: ${title}`);
+      sha = r.content.sha;
+      const entry = { id: postId, title, tags, excerpt: excerptOf(rest), created: p.created, updated: now };
       await saveIndex(ix => { const i = ix.findIndex(x => x.id === postId); i >= 0 ? (ix[i] = entry) : ix.push(entry); }, `Index: ${postId}`);
-      toast('Saved');
-      location.hash = '#/' + postId;
-    } catch (ex) {
-      btn.disabled = false; btn.textContent = 'Save'; err.textContent = ex.message;
-    }
+      if (ta.value === snapshot) dirty = false;
+      history.replaceState(null, '', `#/${postId}/edit`);
+      status('Saved');
+      return true;
+    })().catch(e => { status('Save failed: ' + e.message, true); return false; })
+       .finally(() => { saving = null; });
+    return saving;
+  }
+  async function done() {
+    if (dirty && !(await save())) return;
+    location.hash = postId != null ? '#/' + postId : '#/';
+  }
+  function openTags() {
+    if (document.querySelector('.overlay')) return;
+    const ov = document.createElement('div');
+    ov.className = 'overlay';
+    ov.innerHTML = `
+      <div class="tagpanel">
+        <div class="tagwrap">
+          <div class="tagbox" id="tagbox"><input id="tagIn" type="text" placeholder="Add tag" autocomplete="off"></div>
+          <div class="suggest" id="suggest" hidden></div>
+        </div>
+        <p class="muted hint">Enter to add · Esc to close</p>
+      </div>`;
+    document.body.appendChild(ov);
+    const before = JSON.stringify(tags);
+    const close = () => {
+      tags = ti.get();
+      if (JSON.stringify(tags) !== before) { dirty = true; status('Tags: ' + (tags.join(', ') || 'none')); }
+      ov.remove(); ta.focus();
+    };
+    const ti = tagInput(tags, close);
+    ov.addEventListener('mousedown', e => { if (e.target === ov) { e.preventDefault(); close(); } });
+    document.getElementById('tagIn').focus();
+  }
+
+  const keys = e => {
+    if (document.querySelector('.overlay')) return;
+    const mod = e.metaKey || e.ctrlKey, k = e.key.toLowerCase();
+    if (mod && k === 's') { e.preventDefault(); save(); }
+    else if (mod && k === 'k') { e.preventDefault(); openTags(); }
+    else if (e.key === 'Escape' && !e.isComposing) { e.preventDefault(); done(); }
+  };
+  const unload = e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } };
+  document.addEventListener('keydown', keys);
+  window.addEventListener('beforeunload', unload);
+  document.getElementById('edTags').onclick = openTags;
+  document.getElementById('edDone').onclick = done;
+  editorCleanup = () => {
+    document.removeEventListener('keydown', keys);
+    window.removeEventListener('beforeunload', unload);
+    document.body.classList.remove('editing');
+    document.querySelector('.overlay')?.remove();
   };
 }
 
 // Tag field: shows tags already used in a popup; pick one or type a new one.
-function tagInput(initial) {
+function tagInput(initial, onDone) {
   const box = document.getElementById('tagbox'), input = document.getElementById('tagIn'), pop = document.getElementById('suggest');
   let selected = [...initial], options = [], active = -1;
 
@@ -339,9 +389,14 @@ function tagInput(initial) {
     else if (e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(active - 1, 0); drawPop(); }
     else if (e.key === 'Enter' || e.key === ',') {
       e.preventDefault();
-      if (active >= 0 && options[active]) add(options[active].name); else if (input.value.trim()) add(input.value);
+      if (active >= 0 && options[active]) add(options[active].name);
+      else if (input.value.trim()) add(input.value);
+      else if (e.key === 'Enter' && onDone) { e.stopPropagation(); onDone(); }
     }
-    else if (e.key === 'Escape') pop.hidden = true;
+    else if (e.key === 'Escape') {
+      if (!pop.hidden) pop.hidden = true;
+      else if (onDone) { e.stopPropagation(); onDone(); }
+    }
     else if (e.key === 'Backspace' && !input.value && selected.length) { selected.pop(); drawChips(); drawPop(); }
   });
   pop.addEventListener('mousedown', e => {
@@ -460,6 +515,7 @@ themeBtn.onclick = () => {
 
 // ---------- router ----------
 async function route() {
+  if (editorCleanup) { editorCleanup(); editorCleanup = null; }
   window.scrollTo(0, 0);
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
   try {
@@ -476,6 +532,14 @@ async function route() {
 }
 
 window.addEventListener('hashchange', route);
+// Viewer hotkeys: E edit this post, N new post.
+document.addEventListener('keydown', e => {
+  if (!token || editorCleanup || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+  if (e.target.closest('input, textarea, [contenteditable]')) return;
+  const m = location.hash.match(/^#\/(\d+)$/);
+  if (e.key === 'e' && m) location.hash = `#/${m[1]}/edit`;
+  else if (e.key === 'n') location.hash = '#/new';
+});
 (async () => {
   updateNav();
   try { await loadIndex(); } catch (e) { app.innerHTML = `<p class="error">${esc(e.message)}</p>`; return; }
