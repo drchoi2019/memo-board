@@ -44,7 +44,7 @@ function parse(text) {
   return { ...meta, title: String(meta.title ?? ''), tags: Array.isArray(meta.tags) ? meta.tags : [], body: m[2] };
 }
 function excerptOf(body) {
-  return body.replace(/[#>*_`~\[\]()!-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+  return body.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ').replace(/[#>*_`~\[\]()!-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
 }
 
 // ---------- GitHub ----------
@@ -73,11 +73,65 @@ async function readFile(path) {
   if (!r.ok) throw new Error(`Load failed (${r.status})`);
   return { text: await r.text(), sha: null };
 }
-function writeFile(path, text, sha, message) {
+function writeB64(path, content, sha, message) {
   return api(`${REPO_API}/contents/${path}`, {
     method: 'PUT',
-    body: JSON.stringify({ message, content: b64enc(text), branch: BRANCH, ...(sha ? { sha } : {}) }),
+    body: JSON.stringify({ message, content, branch: BRANCH, ...(sha ? { sha } : {}) }),
   });
+}
+const writeFile = (path, text, sha, message) => writeB64(path, b64enc(text), sha, message);
+
+// ---------- images ----------
+const RAW = `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}/`;
+const MAX_SIDE = 2000;
+
+// Shrink big photos to a JPEG whose long side is MAX_SIDE; leave small ones and GIFs alone.
+async function prepareImage(file) {
+  const ext0 = (file.name.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const bmp = file.type === 'image/gif' ? null : await createImageBitmap(file).catch(() => null);
+  if (!bmp || (Math.max(bmp.width, bmp.height) <= MAX_SIDE && file.size < 600 * 1024)) {
+    return { blob: file, ext: file.type === 'image/gif' ? 'gif' : (ext0 || 'png') };
+  }
+  const s = Math.min(1, MAX_SIDE / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.drawImage(bmp, 0, 0, c.width, c.height);
+  return { blob: await new Promise(r => c.toBlob(r, 'image/jpeg', 0.85)), ext: 'jpg' };
+}
+const blobB64 = blob => new Promise((res, rej) => {
+  const fr = new FileReader();
+  fr.onload = () => res(String(fr.result).split(',')[1]);
+  fr.onerror = rej;
+  fr.readAsDataURL(blob);
+});
+function insertAtCursor(ta, text) {
+  const s = ta.selectionStart, e = ta.selectionEnd;
+  ta.value = ta.value.slice(0, s) + text + ta.value.slice(e);
+  ta.selectionStart = ta.selectionEnd = s + text.length;
+  ta.dispatchEvent(new Event('input'));
+}
+let uploading = 0;
+async function uploadImages(files, ta) {
+  for (const file of files) {
+    if (!file.type.startsWith('image/')) continue;
+    const mark = `![Uploading ${Date.now()}…]()`;
+    insertAtCursor(ta, mark + '\n');
+    uploading++;
+    try {
+      const { blob, ext } = await prepareImage(file);
+      const path = `images/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
+      await writeB64(path, await blobB64(blob), null, `Add image ${path}`);
+      ta.value = ta.value.replace(mark, `![](${path})`);
+    } catch (e) {
+      ta.value = ta.value.replace(mark + '\n', '');
+      alert('Image upload failed: ' + e.message);
+    } finally {
+      uploading--;
+      ta.dispatchEvent(new Event('input'));
+    }
+  }
 }
 function deleteFile(path, sha, message) {
   return api(`${REPO_API}/contents/${path}`, {
@@ -156,6 +210,11 @@ async function renderView(id) {
         </span>
       </div>
     </article>`;
+  // Owner sees new images at once from raw GitHub; visitors get the Pages copy.
+  if (token) app.querySelectorAll('.body img').forEach(img => {
+    const src = img.getAttribute('src') || '';
+    if (src.startsWith('images/')) img.src = RAW + src;
+  });
   document.getElementById('copy').onclick = async () => {
     try { await navigator.clipboard.writeText(location.href); toast('Link copied'); }
     catch { prompt('Copy this link:', location.href); }
@@ -191,8 +250,12 @@ async function renderEdit(id) {
     <div class="field"><textarea id="body" placeholder="Write in Markdown">${esc(p.body)}</textarea></div>
     <div class="row spread">
       <a class="btn ghost" href="${id == null ? '#/' : '#/' + id}">Cancel</a>
-      <button class="btn" id="save">Save</button>
+      <span class="row">
+        <button class="btn ghost" id="imgBtn" type="button">Image</button>
+        <button class="btn" id="save">Save</button>
+      </span>
     </div>
+    <input id="imgFile" type="file" accept="image/*" multiple hidden>
     <p id="err" class="error"></p>`;
   const tags = tagInput(p.tags);
   if (id == null) document.getElementById('title').focus();
@@ -200,10 +263,24 @@ async function renderEdit(id) {
   const grow = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 2 + 'px'; };
   ta.addEventListener('input', grow); grow();
 
+  const fileIn = document.getElementById('imgFile');
+  document.getElementById('imgBtn').onclick = () => fileIn.click();
+  fileIn.onchange = () => { uploadImages([...fileIn.files], ta); fileIn.value = ''; };
+  ta.addEventListener('paste', e => {
+    const files = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith('image/'));
+    if (files.length) { e.preventDefault(); uploadImages(files, ta); }
+  });
+  ta.addEventListener('dragover', e => e.preventDefault());
+  ta.addEventListener('drop', e => {
+    const files = [...(e.dataTransfer?.files || [])].filter(f => f.type.startsWith('image/'));
+    if (files.length) { e.preventDefault(); uploadImages(files, ta); }
+  });
+
   document.getElementById('save').onclick = async e => {
     const btn = e.target, err = document.getElementById('err');
     const title = document.getElementById('title').value.trim();
     const body = document.getElementById('body').value;
+    if (uploading) { err.textContent = 'Wait for images to finish uploading.'; return; }
     if (!title && !body.trim()) { err.textContent = 'Write something first.'; return; }
     btn.disabled = true; btn.textContent = 'Saving…'; err.textContent = '';
     try {
@@ -324,7 +401,11 @@ function updateNav() { document.getElementById('newBtn').hidden = !token; }
 const themeBtn = document.getElementById('themeBtn');
 function applyTheme(dark) {
   if (dark) document.documentElement.dataset.theme = 'dark'; else delete document.documentElement.dataset.theme;
-  themeBtn.textContent = dark ? 'Light' : 'Dark';
+  themeBtn.innerHTML = dark
+    ? '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>'
+    : '<svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>';
+  themeBtn.title = dark ? 'Light mode' : 'Dark mode';
+  themeBtn.setAttribute('aria-label', themeBtn.title);
 }
 applyTheme(load('mb_theme') === 'dark');
 themeBtn.onclick = () => {
