@@ -373,7 +373,22 @@ function renderSettings() {
       <button class="btn" id="saveTok">Save</button>
       <button class="btn ghost" id="clearTok">Remove</button>
     </div>
-    <p id="tokMsg" class="muted"></p>`;
+    <p id="tokMsg" class="muted"></p>
+    <h3>Display</h3>
+    <p class="muted">Saved on this device only.</p>
+    ${DISPLAY.map(d => `
+      <div class="stepper">
+        <span>${d.label}</span>
+        <button class="btn ghost" type="button" data-k="${d.key}" data-dir="-1" aria-label="Decrease ${d.label}">−</button>
+        <output data-k="${d.key}">${displayValue(d)}${d.unit}</output>
+        <button class="btn ghost" type="button" data-k="${d.key}" data-dir="1" aria-label="Increase ${d.label}">+</button>
+      </div>`).join('')}
+    <button class="btn ghost" id="resetDisplay" type="button">Reset</button>`;
+  document.getElementById('resetDisplay').onclick = () => {
+    for (const d of DISPLAY) store(d.key, '');
+    applyDisplay();
+    DISPLAY.forEach(d => document.querySelectorAll(`output[data-k="${d.key}"]`).forEach(o => (o.textContent = d.def + d.unit)));
+  };
   const msg = document.getElementById('tokMsg');
   document.getElementById('saveTok').onclick = async () => {
     const v = document.getElementById('tok').value.trim();
@@ -412,37 +427,19 @@ function applyDisplay() {
   }
 }
 
-// Popup next to the theme button: − / + for each setting.
-const displayBtn = document.getElementById('displayBtn'), displayPop = document.getElementById('displayPop');
-function drawDisplayPop() {
-  displayPop.innerHTML = DISPLAY.map(d => `
-    <div class="stepper">
-      <span>${d.label}</span>
-      <button class="btn ghost" data-k="${d.key}" data-dir="-1" aria-label="Decrease ${d.label}">−</button>
-      <output>${displayValue(d)}${d.unit}</output>
-      <button class="btn ghost" data-k="${d.key}" data-dir="1" aria-label="Increase ${d.label}">+</button>
-    </div>`).join('') + '<button class="btn ghost reset" data-reset="1">Reset</button>';
+function stepDisplay(key, dir) {
+  const d = DISPLAY.find(x => x.key === key);
+  const v = Math.round((Number(displayValue(d)) + d.step * dir) * 10) / 10;
+  const nv = Math.min(d.max, Math.max(d.min, v));
+  store(d.key, nv === d.def ? '' : String(nv));
+  applyDisplay();
+  document.querySelectorAll(`output[data-k="${d.key}"]`).forEach(o => (o.textContent = nv + d.unit));
 }
-displayBtn.onclick = e => {
-  e.stopPropagation();
-  if (displayPop.hidden) drawDisplayPop();
-  displayPop.hidden = !displayPop.hidden;
-};
-displayPop.onclick = e => {
-  e.stopPropagation();
-  const b = e.target.closest('button');
-  if (!b) return;
-  if (b.dataset.reset) { for (const d of DISPLAY) store(d.key, ''); }
-  else {
-    const d = DISPLAY.find(x => x.key === b.dataset.k);
-    const v = Math.round((Number(displayValue(d)) + d.step * b.dataset.dir) * 10) / 10;
-    const nv = Math.min(d.max, Math.max(d.min, v));
-    store(d.key, nv === d.def ? '' : String(nv));
-  }
-  applyDisplay(); drawDisplayPop();
-};
-document.addEventListener('click', () => (displayPop.hidden = true));
-document.addEventListener('keydown', e => { if (e.key === 'Escape') displayPop.hidden = true; });
+// Any button with data-k / data-dir (header A− A+, Settings rows) steps that setting.
+document.addEventListener('click', e => {
+  const b = e.target.closest('button[data-k]');
+  if (b) stepDisplay(b.dataset.k, Number(b.dataset.dir));
+});
 
 // ---------- theme (light by default) ----------
 const themeBtn = document.getElementById('themeBtn');
