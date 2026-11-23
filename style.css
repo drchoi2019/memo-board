@@ -219,3 +219,18 @@ body.editing main { max-width: none; padding: 0; }
   padding: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.18); line-height: 1.5;
 }
 .tagpanel .hint { margin: 10px 2px 0; font-size: 13px; }
+
+/* pinned marker */
+svg.pin {
+  width: .8em; height: .8em; margin-right: .3em;
+  fill: var(--accent); stroke: var(--accent); stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round;
+  vertical-align: baseline;
+}
+
+/* comments (written in the Mac app) */
+.comments { margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--border); }
+.comments .chead { font-size: 13px; margin-bottom: 10px; }
+.comments .comment { margin-bottom: 16px; }
+.comments .cmeta { font-size: 12px; }
+.comments .ctext { font-size: .92em; word-break: break-word; }

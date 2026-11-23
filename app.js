@@ -18,7 +18,11 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const b64enc = s => { let bin = ''; for (const b of new TextEncoder().encode(s)) bin += String.fromCharCode(b); return btoa(bin); };
 const b64dec = s => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\n/g, '')), c => c.charCodeAt(0)));
 const fmtDate = iso => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('ko-KR', { year: 'numeric', month: 'short', day: 'numeric' }); };
+const fmtDateTime = iso => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString('ko-KR', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
 const tagHref = t => '#/tag/' + encodeURIComponent(t);
+// Same counting as the Mac app: characters of the body, 200 characters to a sheet.
+const countOf = text => { const n = String(text ?? '').replace(/\r\n/g, '\n').length; return { chars: n, sheets: Math.ceil(n / 200) }; };
+const PIN = '<svg class="pin" viewBox="0 0 24 24" aria-label="Pinned"><path d="M9 4h6l-1 6 4 3v2H6v-2l4-3-1-6z"/><path d="M12 15v5"/></svg>';
 
 function toast(msg) {
   const el = document.getElementById('toast');
@@ -28,12 +32,12 @@ function toast(msg) {
 
 // ---------- front matter ----------
 function serialize(p) {
-  return `---\ntitle: ${JSON.stringify(p.title)}\ntags: ${JSON.stringify(p.tags)}\n${p.attachments?.length ? `attachments: ${JSON.stringify(p.attachments)}\n` : ''}created: ${p.created}\nupdated: ${p.updated}\n---\n\n${p.body}`;
+  return `---\ntitle: ${JSON.stringify(p.title)}\ntags: ${JSON.stringify(p.tags)}\n${p.attachments?.length ? `attachments: ${JSON.stringify(p.attachments)}\n` : ''}${p.pinned ? 'pinned: true\n' : ''}created: ${p.created}\nupdated: ${p.updated}\n---\n\n${p.body}`;
 }
 function parse(text) {
   text = text.replace(/\r\n/g, '\n');
   const m = text.match(/^---\n([\s\S]*?)\n---\n?\n?([\s\S]*)$/);
-  if (!m) return { title: '', tags: [], attachments: [], body: text };
+  if (!m) return { title: '', tags: [], attachments: [], pinned: false, body: text };
   const meta = {};
   for (const line of m[1].split('\n')) {
     const i = line.indexOf(':');
@@ -41,7 +45,7 @@ function parse(text) {
     const k = line.slice(0, i).trim(), v = line.slice(i + 1).trim();
     try { meta[k] = JSON.parse(v); } catch { meta[k] = v; }
   }
-  return { ...meta, title: String(meta.title ?? ''), tags: Array.isArray(meta.tags) ? meta.tags : [], attachments: Array.isArray(meta.attachments) ? meta.attachments : [], body: m[2] };
+  return { ...meta, title: String(meta.title ?? ''), tags: Array.isArray(meta.tags) ? meta.tags : [], attachments: Array.isArray(meta.attachments) ? meta.attachments : [], pinned: meta.pinned === true || meta.pinned === 'true', body: m[2] };
 }
 function excerptOf(body) {
   return body.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ').replace(/[#>*_`~\[\]()!-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
@@ -176,13 +180,15 @@ function renderList(tag) {
 
 function drawResults(tag) {
   const q = query.toLowerCase();
+  const stamp = p => p.updated || p.created || '';
   const items = index.filter(p =>
     (!tag || p.tags.includes(tag)) &&
-    (!q || (p.title + ' ' + p.tags.join(' ') + ' ' + p.excerpt).toLowerCase().includes(q)));
+    (!q || (p.title + ' ' + p.tags.join(' ') + ' ' + p.excerpt).toLowerCase().includes(q)))
+    .sort((a, b) => (!!b.pinned - !!a.pinned) || stamp(b).localeCompare(stamp(a)) || b.id - a.id);
   document.getElementById('results').innerHTML =
     items.length ? `<ul class="list">${items.map(p => `
       <li>
-        <a class="title" href="#/${p.id}">${esc(p.title || 'Untitled')}</a>
+        <a class="title" href="#/${p.id}">${p.pinned ? PIN : ''}${esc(p.title || 'Untitled')}</a>
         <div class="meta row"><span class="muted">${fmtDate(p.created)}</span>${p.tags.map(t => `<a class="chip" href="${tagHref(t)}">${esc(t)}</a>`).join('')}</div>
         ${p.excerpt ? `<div class="excerpt">${esc(p.excerpt)}</div>` : ''}
       </li>`).join('')}</ul>`
@@ -191,22 +197,29 @@ function drawResults(tag) {
 
 async function renderView(id) {
   app.innerHTML = '<p class="muted">Loading…</p>';
-  const f = await readFile(`posts/${id}.md`);
+  const [f, cf] = await Promise.all([readFile(`posts/${id}.md`), readFile(`comments/${id}.json`).catch(() => null)]);
   if (!f) { app.innerHTML = '<p class="muted">This post does not exist.</p>'; return; }
   const p = parse(f.text);
+  let comments = [];
+  if (cf) { try { comments = JSON.parse(cf.text) || []; } catch {} }
   const s = splitTitle(p.body);
   const rest = s.title && s.title === p.title.trim() ? s.rest : p.body;   // older posts kept the title separately
+  const count = countOf(rest);
   document.title = `${p.title || 'Untitled'} · Memo Board`;
   app.innerHTML = `
     <article class="post">
-      <h1 class="ptitle">${esc(p.title || 'Untitled')}</h1>
+      <h1 class="ptitle">${p.pinned ? PIN : ''}${esc(p.title || 'Untitled')}</h1>
       <div class="meta row">
-        <span class="muted">${fmtDate(p.created)}${p.updated && p.updated !== p.created ? ` · edited ${fmtDate(p.updated)}` : ''}</span>
+        <span class="muted">${fmtDate(p.created)}${p.updated && p.updated !== p.created ? ` · edited ${fmtDate(p.updated)}` : ''} · ${count.chars.toLocaleString('ko-KR')} chars · ${count.sheets.toLocaleString('ko-KR')} sheets (200)</span>
         ${p.tags.map(t => `<a class="chip" href="${tagHref(t)}">${esc(t)}</a>`).join('')}
       </div>
       <div class="body plain">${esc(rest)}</div>
       ${p.attachments.length ? `<div class="attach">${p.attachments.map((a, i) =>
         `<a href="${esc(fileUrl(a))}" target="_blank" rel="noopener">Attachment ${i + 1}</a>`).join('')}</div>` : ''}
+      ${comments.length ? `<div class="comments">
+        <div class="chead muted">Comments ${comments.length}</div>
+        ${comments.map(c => `<div class="comment"><div class="cmeta muted">${esc(fmtDateTime(c.created))}</div><div class="ctext plain">${esc(c.text)}</div></div>`).join('')}
+      </div>` : ''}
       <div class="actions row spread">
         <button class="btn ghost" id="copy">Copy link</button>
         <span class="row" ${token ? '' : 'hidden'}>
@@ -236,7 +249,7 @@ let editorCleanup = null;
 async function renderEdit(id) {
   if (!token) { toast('Add your token first'); location.hash = '#/settings'; return; }
   app.innerHTML = '<p class="muted">Loading…</p>';
-  let p = { title: '', tags: [], attachments: [], body: '' }, sha = null;
+  let p = { title: '', tags: [], attachments: [], pinned: false, body: '' }, sha = null;
   if (id != null) {
     const f = await readFile(`posts/${id}.md`);
     if (!f) { app.innerHTML = '<p class="muted">This post does not exist.</p>'; return; }
@@ -288,10 +301,10 @@ async function renderEdit(id) {
       const now = new Date().toISOString();
       if (postId == null) { await loadIndex(); postId = index.reduce((m, x) => Math.max(m, x.id), 0) + 1; }
       p.created = p.created || now;
-      const post = { title, tags, attachments, body: snapshot, created: p.created, updated: now };
+      const post = { title, tags, attachments, pinned: p.pinned, body: snapshot, created: p.created, updated: now };
       const r = await writeFile(`posts/${postId}.md`, serialize(post), sha, `${sha ? 'Edit' : 'Add'} post ${postId}: ${title}`);
       sha = r.content.sha;
-      const entry = { id: postId, title, tags, excerpt: excerptOf(rest), created: p.created, updated: now };
+      const entry = { id: postId, title, tags, excerpt: excerptOf(rest), created: p.created, updated: now, ...(p.pinned ? { pinned: true } : {}) };
       await saveIndex(ix => { const i = ix.findIndex(x => x.id === postId); i >= 0 ? (ix[i] = entry) : ix.push(entry); }, `Index: ${postId}`);
       if (ta.value === snapshot) dirty = false;
       history.replaceState(null, '', `#/${postId}/edit`);
